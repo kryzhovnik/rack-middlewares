@@ -1,27 +1,27 @@
 # Rack::Intercepter middleware helps when you need to intercept a certain request and
 # return specific status code for it.
-# 
+#
 # This piece of code was written when the author needed to handle a couple of
 # exceptional temporal cases, which was not suited the app business logic even as an exception.
-# 
+#
 # Interception described in the rules table:
-# 
+#
 #     [method, url, status, headers, body]
-# 
+#
 # Example:
-# 
+#
 #     config.middleware.use Rack::Intercepter, [
 #       ['GET', 'https://abc.domain.com/path?param=value', 404]
 #       ['GET', 'https://abc.domain.com/path?param=value', 302, { 'Location' => https://abc.domain.com/param/value }]
 #       ['GET', 'https://abc.domain.com/path?param=value', 403, {}, "Forbidden"]
 #     ]
-# 
+#
 # This implementation has a specific feature: matching url ignoring second-level domain-name,
 # i.e. the following lines will pass the matching:
-# 
+#
 #     https://abc.domain.com/path и
 #     https://abc.domain.local/path
-# 
+#
 # It made this way to have single rules for all the environments: dev, staging, and production.
 
 module Rack
@@ -30,8 +30,8 @@ module Rack
       @app = app
 
       @rules = case rules
-      when Array then items.map { |i| Item.new(*i) }
-      when Item  then items
+      when Array then rules.map { |i| Rule.new(*i) }
+      when Rule  then rules
       else
         raise ArgumentError
       end
@@ -39,34 +39,27 @@ module Rack
 
     def call(env)
       request = Rack::Request.new(env)
-      request_url = FuzzyURI.new(url)
+      request_url = FuzzyURI.new(request.url)
+      method = request.request_method
 
-      item = @items.find do |item|
-        item.method == method && FuzzyURI.new(item.url) == request_url
+      rule = @rules.find do |rule|
+        rule.method == method && FuzzyURI.new(rule.url) == request_url
       end
 
-      if item
-        [item.status, item.headers, [item.body]]
+      if rule
+        [rule.status, rule.headers, [rule.body]]
       else
         @app.call(env)
       end
     end
 
-    def find_interception(method, url)
-
-    end
-
-    Item = Struct.new(:method, :url, :status, :headers, :body) do
+    Rule = Struct.new(:method, :url, :status, :headers, :body) do
       def headers
-        @headers || {}
+        self[:headers] || {}
       end
 
       def body
-        if body
-          body
-        else
-          "STATUS #{status}"
-        end
+        self[:body] || "STATUS #{status}"
       end
     end
 
@@ -87,8 +80,8 @@ module Rack
       end
 
       protected
-        def schema
-          url.schema
+        def scheme
+          url.scheme
         end
 
         def host
@@ -104,7 +97,7 @@ module Rack
         end
 
         def same_schema?(another_url)
-          schema == another_url.schema
+          scheme == another_url.scheme
         end
 
         def same_subdomain?(another_url)
